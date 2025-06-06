@@ -1,0 +1,15 @@
+requests 
+beautifulsoup4 
+selenium 
+webdriver-manager 
+matplotlib 
+seaborn 
+pandas 
+nltk 
+textstat 
+whois 
+python-whois
+gradio
+plotly
+flask
+flask-cors
