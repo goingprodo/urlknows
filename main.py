@@ -14,19 +14,27 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 from datetime import datetime, timedelta
-import whois
-from textstat import flesch_reading_ease, flesch_kincaid_grade
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
 import ssl
 import socket
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
 import warnings
 warnings.filterwarnings('ignore')
+
+# NLTK와 textstat은 선택적으로 사용
+try:
+    import nltk
+    from nltk.corpus import stopwords
+    from nltk.tokenize import word_tokenize
+    NLTK_AVAILABLE = True
+except ImportError:
+    NLTK_AVAILABLE = False
+    print("NLTK가 설치되지 않아 기본 텍스트 분석을 사용합니다.")
+
+try:
+    from textstat import flesch_reading_ease, flesch_kincaid_grade
+    TEXTSTAT_AVAILABLE = True
+except ImportError:
+    TEXTSTAT_AVAILABLE = False
+    print("textstat이 설치되지 않아 가독성 분석을 건너뜁니다.")
 
 class URLAnalyzer:
     def __init__(self):
@@ -35,13 +43,44 @@ class URLAnalyzer:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
         
-        # NLTK 데이터 다운로드 (처음 실행시)
+        # 기본 불용어 설정
+        self.stop_words = {
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+            'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did',
+            'will', 'would', 'should', 'could', 'can', 'may', 'might', 'must', 'this', 'that',
+            'these', 'those', 'he', 'she', 'it', 'they', 'we', 'you', 'i', 'me', 'him', 'her',
+            'us', 'them', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'up', 'down',
+            'out', 'off', 'over', 'under', 'again', 'further', 'then', 'once'
+        }
+        
+        # NLTK 초기화 시도
+        if NLTK_AVAILABLE:
+            self._initialize_nltk()
+    
+    def _initialize_nltk(self):
+        """NLTK 초기화"""
         try:
-            nltk.data.find('tokenizers/punkt')
-            nltk.data.find('corpora/stopwords')
-        except LookupError:
-            nltk.download('punkt', quiet=True)
-            nltk.download('stopwords', quiet=True)
+            # NLTK 데이터 확인 및 다운로드
+            try:
+                nltk.data.find('tokenizers/punkt')
+            except LookupError:
+                print("NLTK punkt 데이터를 다운로드합니다...")
+                nltk.download('punkt', quiet=True)
+            
+            try:
+                nltk.data.find('corpora/stopwords')
+                english_stopwords = set(stopwords.words('english'))
+                self.stop_words.update(english_stopwords)
+            except LookupError:
+                print("NLTK stopwords 데이터를 다운로드합니다...")
+                nltk.download('stopwords', quiet=True)
+                try:
+                    english_stopwords = set(stopwords.words('english'))
+                    self.stop_words.update(english_stopwords)
+                except:
+                    pass
+        except Exception as e:
+            print(f"NLTK 초기화 중 오류: {e}")
     
     def analyze_url(self, url):
         """메인 분석 함수 - 모든 분석 결과를 반환"""
@@ -69,13 +108,18 @@ class URLAnalyzer:
             response = self.session.get(url, timeout=10)
             soup = BeautifulSoup(response.content, 'html.parser')
             
+            # 제목 안전하게 추출
+            title = ''
+            if soup.title and soup.title.string:
+                title = soup.title.string.strip()
+            
             return {
                 'status_code': response.status_code,
                 'response_time': response.elapsed.total_seconds(),
                 'content_length': len(response.content),
                 'content_type': response.headers.get('content-type', ''),
                 'server': response.headers.get('server', ''),
-                'title': soup.title.string if soup.title else '',
+                'title': title,
                 'meta_description': self._get_meta_content(soup, 'description'),
                 'language': soup.html.get('lang') if soup.html else '',
                 'charset': self._extract_charset(response.headers.get('content-type', ''))
@@ -134,7 +178,7 @@ class URLAnalyzer:
                 'links': {
                     'internal_count': len(internal_links),
                     'external_count': len(external_links),
-                    'internal_links': internal_links[:10],  # 상위 10개만
+                    'internal_links': internal_links[:10],
                     'external_links': external_links[:10]
                 },
                 'robots_txt': self._check_robots_txt(url),
@@ -148,18 +192,21 @@ class URLAnalyzer:
         try:
             # 여러 번 요청하여 평균 측정
             times = []
-            for _ in range(5):
+            for _ in range(3):  # 5번에서 3번으로 줄여서 빠르게
                 start_time = time.time()
                 response = self.session.get(url, timeout=10)
                 end_time = time.time()
                 times.append(end_time - start_time)
-                time.sleep(0.5)
+                time.sleep(0.3)
             
             # DNS 조회 시간 측정
-            domain = urlparse(url).netloc
-            dns_start = time.time()
-            socket.gethostbyname(domain)
-            dns_time = time.time() - dns_start
+            try:
+                domain = urlparse(url).netloc
+                dns_start = time.time()
+                socket.gethostbyname(domain)
+                dns_time = time.time() - dns_start
+            except:
+                dns_time = 0
             
             return {
                 'avg_response_time': sum(times) / len(times),
@@ -175,30 +222,86 @@ class URLAnalyzer:
             return {'error': str(e)}
     
     def analyze_content(self, url):
-        """콘텐츠 분석"""
+        """콘텐츠 분석 - 개선된 버전"""
         try:
             response = self.session.get(url, timeout=10)
             soup = BeautifulSoup(response.content, 'html.parser')
             
+            # 불필요한 요소 제거
+            for element in soup(['script', 'style', 'nav', 'header', 'footer']):
+                element.decompose()
+            
             # 텍스트 추출
             text = soup.get_text()
-            words = word_tokenize(text.lower())
             
-            # 불용어 제거
-            stop_words = set(stopwords.words('english')) | set(stopwords.words('korean') if 'korean' in stopwords.fileids() else [])
-            filtered_words = [word for word in words if word.isalnum() and word not in stop_words]
+            if not text or not text.strip():
+                return {
+                    'word_count': 0,
+                    'character_count': 0,
+                    'paragraph_count': 0,
+                    'reading_ease': 0,
+                    'reading_grade': 0,
+                    'most_common_words': {},
+                    'content_density': 0
+                }
+            
+            # 텍스트 정리
+            text = re.sub(r'\s+', ' ', text.strip())
+            
+            # 단어 분리
+            if NLTK_AVAILABLE:
+                try:
+                    words = word_tokenize(text.lower())
+                except:
+                    words = self._simple_tokenize(text)
+            else:
+                words = self._simple_tokenize(text)
+            
+            # 단어 필터링
+            filtered_words = []
+            for word in words:
+                if (len(word) > 2 and 
+                    word.isalpha() and 
+                    word.lower() not in self.stop_words):
+                    filtered_words.append(word.lower())
+            
+            # 가독성 분석
+            reading_ease = 0
+            reading_grade = 0
+            if TEXTSTAT_AVAILABLE and text:
+                try:
+                    reading_ease = flesch_reading_ease(text)
+                    reading_grade = flesch_kincaid_grade(text)
+                except:
+                    pass
             
             return {
                 'word_count': len(filtered_words),
                 'character_count': len(text),
                 'paragraph_count': len(soup.find_all('p')),
-                'reading_ease': flesch_reading_ease(text) if text else 0,
-                'reading_grade': flesch_kincaid_grade(text) if text else 0,
+                'reading_ease': reading_ease,
+                'reading_grade': reading_grade,
                 'most_common_words': dict(Counter(filtered_words).most_common(20)),
                 'content_density': len(filtered_words) / len(response.content) * 1000 if response.content else 0
             }
         except Exception as e:
-            return {'error': str(e)}
+            print(f"콘텐츠 분석 오류: {e}")
+            return {
+                'error': str(e),
+                'word_count': 0,
+                'character_count': 0,
+                'paragraph_count': 0,
+                'reading_ease': 0,
+                'reading_grade': 0,
+                'most_common_words': {},
+                'content_density': 0
+            }
+    
+    def _simple_tokenize(self, text):
+        """간단한 토큰화 (NLTK 대체)"""
+        # 기본적인 단어 분리
+        words = re.findall(r'\b\w+\b', text.lower())
+        return words
     
     def analyze_technical(self, url):
         """기술적 분석"""
@@ -238,16 +341,19 @@ class URLAnalyzer:
             ssl_info = {}
             
             if is_https:
-                domain = urlparse(url).netloc
-                context = ssl.create_default_context()
-                with socket.create_connection((domain, 443), timeout=10) as sock:
-                    with context.wrap_socket(sock, server_hostname=domain) as ssock:
-                        cert = ssock.getpeercert()
-                        ssl_info = {
-                            'issuer': dict(x[0] for x in cert['issuer']),
-                            'subject': dict(x[0] for x in cert['subject']),
-                            'expires': cert['notAfter']
-                        }
+                try:
+                    domain = urlparse(url).netloc
+                    context = ssl.create_default_context()
+                    with socket.create_connection((domain, 443), timeout=10) as sock:
+                        with context.wrap_socket(sock, server_hostname=domain) as ssock:
+                            cert = ssock.getpeercert()
+                            ssl_info = {
+                                'issuer': dict(x[0] for x in cert['issuer']),
+                                'subject': dict(x[0] for x in cert['subject']),
+                                'expires': cert['notAfter']
+                            }
+                except Exception as ssl_e:
+                    ssl_info = {'error': str(ssl_e)}
             
             return {
                 'https': is_https,
@@ -264,41 +370,81 @@ class URLAnalyzer:
             return {'error': str(e)}
     
     def analyze_keywords(self, url):
-        """키워드 분석"""
+        """키워드 분석 - 개선된 버전"""
         try:
             response = self.session.get(url, timeout=10)
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # 텍스트 추출 및 키워드 분석
-            title = soup.title.string if soup.title else ''
+            # 불필요한 요소 제거
+            for element in soup(['script', 'style', 'nav', 'header', 'footer']):
+                element.decompose()
+            
+            # 텍스트 추출
+            title = soup.title.string.strip() if soup.title and soup.title.string else ''
             meta_desc = self._get_meta_content(soup, 'description')
-            headings = ' '.join([h.get_text() for h in soup.find_all(['h1', 'h2', 'h3'])])
+            headings = ' '.join([h.get_text().strip() for h in soup.find_all(['h1', 'h2', 'h3'])])
             body_text = soup.get_text()
             
-            # 키워드 밀도 계산
+            # 전체 텍스트 결합
             all_text = f"{title} {meta_desc} {headings} {body_text}".lower()
+            all_text = re.sub(r'\s+', ' ', all_text.strip())
+            
+            if not all_text:
+                return {
+                    'total_words': 0,
+                    'unique_words': 0,
+                    'keyword_density': {},
+                    'top_keywords': {},
+                    'title_keywords': {},
+                    'meta_keywords': ''
+                }
+            
+            # 단어 추출
             words = re.findall(r'\b\w+\b', all_text)
             word_freq = Counter(words)
             
-            # 불용어 제거
-            stop_words = set(stopwords.words('english'))
-            filtered_freq = {word: freq for word, freq in word_freq.items() 
-                           if word not in stop_words and len(word) > 2}
+            # 불용어 제거 및 필터링
+            filtered_freq = {}
+            for word, freq in word_freq.items():
+                if (len(word) > 2 and 
+                    word not in self.stop_words and 
+                    word.isalpha()):
+                    filtered_freq[word] = freq
             
             total_words = len(words)
-            keyword_density = {word: (freq/total_words)*100 
-                             for word, freq in list(filtered_freq.items())[:20]}
+            
+            # 키워드 밀도 계산
+            keyword_density = {}
+            if total_words > 0:
+                for word, freq in list(filtered_freq.items())[:20]:
+                    keyword_density[word] = (freq / total_words) * 100
+            
+            # 제목 키워드 분석
+            title_words = re.findall(r'\b\w+\b', title.lower())
+            title_keywords = {}
+            for word in title_words:
+                if word not in self.stop_words and len(word) > 2:
+                    title_keywords[word] = title_keywords.get(word, 0) + 1
             
             return {
                 'total_words': total_words,
                 'unique_words': len(set(words)),
                 'keyword_density': keyword_density,
                 'top_keywords': dict(Counter(filtered_freq).most_common(20)),
-                'title_keywords': Counter(re.findall(r'\b\w+\b', title.lower())),
+                'title_keywords': title_keywords,
                 'meta_keywords': self._get_meta_content(soup, 'keywords')
             }
         except Exception as e:
-            return {'error': str(e)}
+            print(f"키워드 분석 오류: {e}")
+            return {
+                'error': str(e),
+                'total_words': 0,
+                'unique_words': 0,
+                'keyword_density': {},
+                'top_keywords': {},
+                'title_keywords': {},
+                'meta_keywords': ''
+            }
     
     def analyze_social_media(self, url):
         """소셜 미디어 분석"""
@@ -361,40 +507,47 @@ class URLAnalyzer:
     
     def generate_report(self, analysis_results, save_path=None):
         """분석 결과 리포트 생성"""
+        basic_info = analysis_results.get('basic_info', {})
+        seo_analysis = analysis_results.get('seo_analysis', {})
+        performance = analysis_results.get('performance', {})
+        content_analysis = analysis_results.get('content_analysis', {})
+        security_analysis = analysis_results.get('security_analysis', {})
+        mobile_analysis = analysis_results.get('mobile_analysis', {})
+        
         report = f"""
 # URL 분석 리포트
-분석 URL: {analysis_results['url']}
-분석 시간: {analysis_results['timestamp']}
+분석 URL: {analysis_results.get('url', 'N/A')}
+분석 시간: {analysis_results.get('timestamp', 'N/A')}
 
 ## 📊 기본 정보
-- 상태 코드: {analysis_results['basic_info'].get('status_code', 'N/A')}
-- 응답 시간: {analysis_results['basic_info'].get('response_time', 'N/A')}초
-- 콘텐츠 크기: {analysis_results['basic_info'].get('content_length', 'N/A')} bytes
-- 페이지 제목: {analysis_results['basic_info'].get('title', 'N/A')}
+- 상태 코드: {basic_info.get('status_code', 'N/A')}
+- 응답 시간: {basic_info.get('response_time', 'N/A')}초
+- 콘텐츠 크기: {basic_info.get('content_length', 'N/A')} bytes
+- 페이지 제목: {basic_info.get('title', 'N/A')}
 
 ## 🔍 SEO 분석
-- 내부 링크: {analysis_results['seo_analysis'].get('links', {}).get('internal_count', 0)}개
-- 외부 링크: {analysis_results['seo_analysis'].get('links', {}).get('external_count', 0)}개
-- 총 이미지: {analysis_results['seo_analysis'].get('images', {}).get('total_images', 0)}개
-- ALT 태그 없는 이미지: {analysis_results['seo_analysis'].get('images', {}).get('images_without_alt', 0)}개
+- 내부 링크: {seo_analysis.get('links', {}).get('internal_count', 0)}개
+- 외부 링크: {seo_analysis.get('links', {}).get('external_count', 0)}개
+- 총 이미지: {seo_analysis.get('images', {}).get('total_images', 0)}개
+- ALT 태그 없는 이미지: {seo_analysis.get('images', {}).get('images_without_alt', 0)}개
 
 ## ⚡ 성능 분석
-- 평균 응답 시간: {analysis_results['performance'].get('avg_response_time', 0):.2f}초
-- DNS 조회 시간: {analysis_results['performance'].get('dns_lookup_time', 0):.2f}초
-- 성능 점수: {analysis_results['performance'].get('performance_score', 0):.1f}/100
+- 평균 응답 시간: {performance.get('avg_response_time', 0):.2f}초
+- DNS 조회 시간: {performance.get('dns_lookup_time', 0):.2f}초
+- 성능 점수: {performance.get('performance_score', 0):.1f}/100
 
 ## 📝 콘텐츠 분석
-- 단어 수: {analysis_results['content_analysis'].get('word_count', 0)}개
-- 문단 수: {analysis_results['content_analysis'].get('paragraph_count', 0)}개
-- 가독성 점수: {analysis_results['content_analysis'].get('reading_ease', 0):.1f}
+- 단어 수: {content_analysis.get('word_count', 0)}개
+- 문단 수: {content_analysis.get('paragraph_count', 0)}개
+- 가독성 점수: {content_analysis.get('reading_ease', 0):.1f}
 
 ## 🔒 보안 분석
-- HTTPS 사용: {'✅' if analysis_results['security_analysis'].get('https') else '❌'}
-- 보안 헤더 설정: {len([h for h in analysis_results['security_analysis'].get('security_headers', {}).values() if h])}개
+- HTTPS 사용: {'✅' if security_analysis.get('https') else '❌'}
+- 보안 헤더 설정: {len([h for h in security_analysis.get('security_headers', {}).values() if h])}개
 
 ## 📱 모바일 호환성
-- 뷰포트 메타 태그: {'✅' if analysis_results['mobile_analysis'].get('viewport_meta') else '❌'}
-- 모바일 친화성 점수: {analysis_results['mobile_analysis'].get('mobile_friendly_score', 0):.1f}/100
+- 뷰포트 메타 태그: {'✅' if mobile_analysis.get('viewport_meta') else '❌'}
+- 모바일 친화성 점수: {mobile_analysis.get('mobile_friendly_score', 0):.1f}/100
         """
         
         if save_path:
@@ -406,23 +559,32 @@ class URLAnalyzer:
     
     def create_dashboard_data(self, analysis_results):
         """대시보드용 데이터 생성"""
+        performance = analysis_results.get('performance', {})
+        content_analysis = analysis_results.get('content_analysis', {})
+        seo_analysis = analysis_results.get('seo_analysis', {})
+        keyword_analysis = analysis_results.get('keyword_analysis', {})
+        security_analysis = analysis_results.get('security_analysis', {})
+        mobile_analysis = analysis_results.get('mobile_analysis', {})
+        
         dashboard_data = {
             'stats': {
-                'total_visitors': analysis_results['performance'].get('performance_score', 0) * 23,  # 예시
-                'page_views': analysis_results['content_analysis'].get('word_count', 0),
-                'clicks': analysis_results['seo_analysis'].get('links', {}).get('internal_count', 0) * 10,
-                'avg_session': analysis_results['performance'].get('avg_response_time', 0) * 100
+                'total_visitors': performance.get('performance_score', 0) * 23,
+                'page_views': content_analysis.get('word_count', 0),
+                'clicks': seo_analysis.get('links', {}).get('internal_count', 0) * 10,
+                'avg_session': performance.get('avg_response_time', 0) * 100
             },
-            'keywords': list(analysis_results['keyword_analysis'].get('top_keywords', {}).items())[:15],
+            'keywords': list(keyword_analysis.get('top_keywords', {}).items())[:15],
             'performance_data': {
-                'response_times': [analysis_results['performance'].get('min_response_time', 0),
-                                 analysis_results['performance'].get('avg_response_time', 0),
-                                 analysis_results['performance'].get('max_response_time', 0)],
+                'response_times': [
+                    performance.get('min_response_time', 0),
+                    performance.get('avg_response_time', 0),
+                    performance.get('max_response_time', 0)
+                ],
                 'scores': {
-                    'seo': len(analysis_results['seo_analysis'].get('meta_tags', {})) * 10,
-                    'performance': analysis_results['performance'].get('performance_score', 0),
-                    'security': 85 if analysis_results['security_analysis'].get('https') else 45,
-                    'mobile': analysis_results['mobile_analysis'].get('mobile_friendly_score', 0)
+                    'seo': len(seo_analysis.get('meta_tags', {})) * 10,
+                    'performance': performance.get('performance_score', 0),
+                    'security': 85 if security_analysis.get('https') else 45,
+                    'mobile': mobile_analysis.get('mobile_friendly_score', 0)
                 }
             }
         }
