@@ -237,6 +237,15 @@ dashboard_data = analyzer.create_dashboard_data(results)
 
 ---
 
+## 📄 License
+
+- **Non-Commercial**: AGPL-3.0
+- **Commercial**: [Contact us](mailto:license@yourcompany.com)
+
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
+---
+
 **Made with ❤️ by URLKnows Team**
 
 📧 문의사항이 있으시면 언제든 연락해주세요!
