@@ -544,6 +544,7 @@
 
     <script>
         let currentAnalysisData = null;
+        let charts = {}; // 차트 인스턴스 저장용
 
         function handleKeyPress(event) {
             if (event.key === 'Enter') {
@@ -563,6 +564,16 @@
             setTimeout(() => {
                 toast.classList.remove('show');
             }, 3000);
+        }
+
+        // 기존 차트들을 제거하는 함수
+        function destroyExistingCharts() {
+            Object.keys(charts).forEach(chartKey => {
+                if (charts[chartKey]) {
+                    charts[chartKey].destroy();
+                    charts[chartKey] = null;
+                }
+            });
         }
 
         async function analyzeUrl() {
@@ -651,6 +662,9 @@
         }
 
         function createCharts(data) {
+            // 기존 차트 제거
+            destroyExistingCharts();
+            
             createPerformanceChart(data.summary);
             createSeoChart(data.summary);
             createKeywordChart(data.results.keyword_analysis);
@@ -659,7 +673,7 @@
 
         function createPerformanceChart(summary) {
             const ctx = document.getElementById('performanceChart').getContext('2d');
-            new Chart(ctx, {
+            charts.performance = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: ['응답시간(ms)', '성능점수', '콘텐츠(KB)', '이미지수'],
@@ -708,7 +722,7 @@
 
         function createSeoChart(summary) {
             const ctx = document.getElementById('seoChart').getContext('2d');
-            new Chart(ctx, {
+            charts.seo = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
                     labels: ['내부 링크', '외부 링크', '이미지', 'ALT 없는 이미지'],
@@ -754,7 +768,7 @@
             const keywords = Object.keys(keywordData.top_keywords).slice(0, 10);
             const frequencies = Object.values(keywordData.top_keywords).slice(0, 10);
 
-            new Chart(ctx, {
+            charts.keyword = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: keywords,
@@ -791,7 +805,7 @@
             const securityScore = summary.https_enabled ? 80 : 30;
             const seoScore = Math.min((summary.internal_links + summary.external_links) * 2, 100);
             
-            new Chart(ctx, {
+            charts.quality = new Chart(ctx, {
                 type: 'radar',
                 data: {
                     labels: ['성능', '보안', 'SEO', '모바일', '콘텐츠'],
