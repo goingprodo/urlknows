@@ -2,10 +2,6 @@
 
 정확한 데이터로 더 나은 인사이트를 제공하는 종합적인 URL 분석 도구
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
-![Flask](https://img.shields.io/badge/Flask-2.0+-green.svg)
-![Chart.js](https://img.shields.io/badge/Chart.js-3.9+-orange.svg)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ## 📊 주요 기능
 
